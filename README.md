@@ -113,4 +113,4 @@ Open your browser and navigate to:
 ---
 
 ## 📄 License
-This project is developed for **Smart India Hackathon (SIH26187)**. All rights reserved.
+All rights reserved.
