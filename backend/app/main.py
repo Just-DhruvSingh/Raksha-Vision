@@ -75,6 +75,17 @@ def get_vision_engine() -> VisionEngine:
 
 # --- Health & Base Endpoints ---
 
+@app.get("/", tags=["Root"])
+def root_welcome():
+    """Root endpoint providing system info and links to documentation."""
+    return {
+        "system": "RakshaVision AI Perimeter Defense System API",
+        "status": "online",
+        "documentation": "/docs",
+        "health": "/health",
+        "version": "1.0.0"
+    }
+
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 def health_check():
