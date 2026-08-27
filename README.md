@@ -1,4 +1,4 @@
-# 🛡️ RakshaVision AI (SIH26187)
+# 🛡️ RakshaVision AI
 > **Edge-Native Perimeter Defense & Intrusion Detection System**
 
 RakshaVision AI is a high-performance, real-time computer vision and spatial analytics backend built for edge perimeter security. It uses YOLOv8 object detection, ByteTrack multi-object tracking, and ray-casting spatial math to detect perimeter breaches, suppress false alarms, and broadcast instant WebSocket security alerts.
