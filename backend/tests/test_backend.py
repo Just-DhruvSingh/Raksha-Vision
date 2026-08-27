@@ -8,20 +8,17 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.main import app
-from app.database import engine, Base, SessionLocal
-from app import models
-from app.vision.spatial import is_point_in_polygon, is_bbox_in_polygon, do_line_segments_intersect
-from app.vision.engine import VisionEngine
+from app.database import engine, Base
+from app.vision.spatial import is_point_in_polygon, is_bbox_in_polygon, do_line_segments_intersect, calculate_bottom_center
+from app.vision.engine import VisionEngine, apply_clahe_lowlight
 
 # Create test database tables
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
 
 def test_spatial_ray_casting():
-    # Square polygon from (10, 10) to (100, 100)
-    poly = [[10.0, 10.0], [100.0, 10.0], [100.0, 10.00], [10.0, 100.0]]
-    # Correct convex square
-    poly = [[10.0, 10.0], [100.0, 10.0], [100.0, 100.0], [10.0, 100.0]]
+    # Polygon with tuple/list vertices
+    poly = [(10.0, 10.0), (100.0, 10.0), (100.0, 100.0), (10.0, 100.0)]
 
     # Test point inside
     assert is_point_in_polygon((50.0, 50.0), poly) is True
@@ -30,8 +27,9 @@ def test_spatial_ray_casting():
     assert is_point_in_polygon((50.0, 150.0), poly) is False
     assert is_point_in_polygon((0.0, 0.0), poly) is False
 
-    # Bounding box test [x1, y1, x2, y2] -> bottom center is (50, 80)
+    # calculate_bottom_center [x1, y1, x2, y2] -> bottom center is (50, 80)
     bbox_inside = [40.0, 20.0, 60.0, 80.0]
+    assert calculate_bottom_center(bbox_inside) == (50.0, 80.0)
     assert is_bbox_in_polygon(bbox_inside, poly, ref_point="bottom_center") is True
 
     # Bounding box outside -> bottom center is (150, 80)
@@ -47,6 +45,11 @@ def test_line_intersection():
     # Non-intersecting parallel lines
     r1, r2 = (0.0, 60.0), (100.0, 60.0)
     assert do_line_segments_intersect(q1, q2, r1, r2) is False
+
+def test_clahe_lowlight_enhancement():
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    enhanced = apply_clahe_lowlight(frame)
+    assert enhanced.shape == (100, 100, 3)
 
 def test_health_check_endpoint():
     response = client.get("/health")
@@ -120,12 +123,11 @@ def test_zone_crud_endpoints():
     assert del_res.status_code == 204
 
 def test_vision_engine_spatial_processing():
-    # Create a synthetic black frame
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     zones = [{
         "id": 1,
         "name": "Test Intrusion Zone",
-        "polygon_coords": [[50.0, 50.0], [300.0, 50.0], [300.0, 300.0], [50.0, 300.0]],
+        "polygon_coords": [(50.0, 50.0), (300.0, 50.0), (300.0, 300.0), (50.0, 300.0)],
         "alert_type": "intrusion"
     }]
 
@@ -134,9 +136,10 @@ def test_vision_engine_spatial_processing():
         alerts_triggered.append(alert)
 
     engine_inst = VisionEngine(model_path="yolov8n.pt")
-    output = engine_inst.process_frame(frame, zones=zones, camera_id=1, alert_callback=on_alert)
+    output = engine_inst.process_frame(frame, zones=zones, camera_id=1, alert_callback=on_alert, enable_clahe=True)
 
     assert "detections" in output
     assert "alerts" in output
     assert "annotated_frame" in output
+    assert "breach_detected" in output
     assert output["annotated_frame"].shape == (480, 640, 3)
