@@ -1,9 +1,11 @@
 
-# Virtual Environments
+# Virtual Environments & Configuration
 .venv/
 venv/
 ENV/
 env/
+.env
+*.env
 
 # Python cache & compiled files
 __pycache__/
