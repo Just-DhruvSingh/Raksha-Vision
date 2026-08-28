@@ -1,4 +1,4 @@
-# 🛡️ RakshaVision AI (SIH26187)
+# 🛡️ RakshaVision AI
 > **Edge-Native Perimeter Defense & Intrusion Detection System**
 
 RakshaVision AI is a real-time computer vision and spatial intelligence platform developed for **Smart India Hackathon (SIH Problem Statement 26187)**. It connects **YOLOv8 + ByteTrack object tracking**, **Ray-Casting spatial polygon math**, **CLAHE low-light enhancement**, **real-time WebSocket telemetry**, and an interactive **React + Vite dashboard**.
@@ -103,4 +103,4 @@ npm run dev
 ---
 
 ## 📄 License
-Developed for **Smart India Hackathon (SIH26187)**.
+All rights reserved for this idea 
