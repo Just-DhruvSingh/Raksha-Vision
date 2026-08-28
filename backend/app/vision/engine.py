@@ -5,23 +5,81 @@ import logging
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, AsyncGenerator, Tuple
+from collections import deque
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
 from app.vision.spatial import is_point_in_polygon, calculate_bottom_center
+from app.services.telegram import get_telegram_service
 
 logger = logging.getLogger("RakshaVisionEngine")
 logging.basicConfig(level=logging.INFO)
 
-# Data & Snapshot Storage Setup
+# Data, Snapshot & Video Storage Setup
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 SNAPSHOTS_DIR = os.path.join(DATA_DIR, "snapshots")
+CLIPS_DIR = os.path.join(DATA_DIR, "clips")
 os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+os.makedirs(CLIPS_DIR, exist_ok=True)
 
 # COCO Class Mappings & Threat Definitions
 THREAT_CLASSES = {"person", "car", "motorcycle", "bus", "truck"}
 BENIGN_ANIMALS = {"cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "bird"}
+
+
+def generate_video_clip(frames: List[np.ndarray], output_path: str, fps: float = 15.0) -> Optional[str]:
+    """
+    Compiles a list of BGR image frames into a 5-second MP4 video clip.
+    Returns the video file path if successful, None otherwise.
+    """
+    if not frames:
+        return None
+
+    try:
+        height, width = frames[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        for f in frames:
+            if f.shape[:2] != (height, width):
+                f = cv2.resize(f, (width, height))
+            out.write(f)
+        out.release()
+        logger.info(f"Successfully generated 5-second MP4 video clip: {output_path}")
+        return output_path
+    except Exception as e:
+        logger.error(f"Failed to generate MP4 video clip: {e}")
+        return None
+
+
+def dispatch_telegram_alert_async(alert_data: Dict[str, Any]):
+    """
+    Dispatches high-priority Telegram alert asynchronously without blocking
+    the computer vision inference loop or FastAPI event loop.
+    """
+    try:
+        telegram_svc = get_telegram_service()
+        if not telegram_svc.is_configured:
+            return
+
+        coro = telegram_svc.send_breach_alert(
+            camera_id=alert_data.get("camera_id", 1),
+            object_type=alert_data.get("object_type", "unknown"),
+            confidence=alert_data.get("confidence", 0.0),
+            timestamp=alert_data.get("timestamp", datetime.utcnow().isoformat()),
+            zone_name=alert_data.get("zone_name"),
+            video_path=alert_data.get("video_clip_path"),
+            photo_path=alert_data.get("snapshot_path")
+        )
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            asyncio.run(coro)
+    except Exception as exc:
+        logger.error(f"Error dispatching async Telegram alert: {exc}")
+
 
 def apply_clahe_lowlight(frame: np.ndarray, clip_limit: float = 2.0, tile_grid_size: Tuple[int, int] = (8, 8)) -> np.ndarray:
     """
@@ -46,6 +104,7 @@ class VisionEngine:
         logger.info(f"Initializing VisionEngine with YOLO model: {model_path}")
         self.model = YOLO(model_path)
         self.active_alert_ids = set()
+        self.frame_buffers: Dict[int, deque] = {}
 
     def process_frame(
         self,
@@ -61,6 +120,11 @@ class VisionEngine:
         """
         if frame is None or frame.size == 0:
             return {"detections": [], "alerts": [], "annotated_frame": frame, "breach_detected": False}
+
+        # Store frame in rolling buffer for 5-second MP4 clip generation (approx 15 FPS * 5 sec = 75 frames max)
+        if camera_id not in self.frame_buffers:
+            self.frame_buffers[camera_id] = deque(maxlen=75)
+        self.frame_buffers[camera_id].append(frame.copy())
 
         if enable_clahe:
             frame = apply_clahe_lowlight(frame)
@@ -149,14 +213,31 @@ class VisionEngine:
                 cv2.putText(annotated_frame, label, (x1, max(y1 - 10, 15)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                # Handle snapshot alert creation
+                # Handle snapshot & 5-second MP4 video clip alert creation
                 if is_breaching:
                     alert_key = (track_id, camera_id) if track_id is not None else (time.time(), camera_id)
                     if alert_key not in self.active_alert_ids:
                         self.active_alert_ids.add(alert_key)
-                        snapshot_filename = f"incident_cam{camera_id}_{int(time.time()*1000)}.jpg"
+                        ts_ms = int(time.time() * 1000)
+                        timestamp_str = datetime.utcnow().isoformat()
+
+                        snapshot_filename = f"incident_cam{camera_id}_{ts_ms}.jpg"
                         snapshot_path = os.path.join(SNAPSHOTS_DIR, snapshot_filename)
                         cv2.imwrite(snapshot_path, annotated_frame)
+
+                        # Compile 5-second MP4 video clip from rolling frame buffer
+                        video_filename = f"breach_cam{camera_id}_{ts_ms}.mp4"
+                        video_path = os.path.join(CLIPS_DIR, video_filename)
+                        buffered_frames = list(self.frame_buffers.get(camera_id, [frame]))
+                        video_clip_path = generate_video_clip(buffered_frames, video_path)
+
+                        zone_name = None
+                        if zones:
+                            for z in zones:
+                                z_id = z.get("id")
+                                if (z_id and z_id in breached_zone_ids) or breach_detected:
+                                    zone_name = z.get("name")
+                                    break
 
                         alert_data = {
                             "camera_id": camera_id,
@@ -164,9 +245,15 @@ class VisionEngine:
                             "confidence": round(conf, 3),
                             "bbox": [round(c, 1) for c in xyxy],
                             "snapshot_path": snapshot_path,
-                            "timestamp": datetime.utcnow().isoformat()
+                            "video_clip_path": video_clip_path,
+                            "zone_name": zone_name,
+                            "timestamp": timestamp_str
                         }
                         alerts.append(alert_data)
+
+                        # Dispatch asynchronous, non-blocking Telegram alert
+                        dispatch_telegram_alert_async(alert_data)
+
                         if alert_callback:
                             try:
                                 alert_callback(alert_data)
