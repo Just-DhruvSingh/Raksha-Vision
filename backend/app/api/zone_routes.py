@@ -18,7 +18,6 @@ def list_zones(camera_id: Optional[int] = None, skip: int = 0, limit: int = 100,
 @router.post("", response_model=schemas.ZoneResponse, status_code=201)
 def create_zone(zone_in: schemas.ZoneCreate, db: Session = Depends(get_db)):
     """Create a polygonal security zone for a camera stream."""
-    # Verify camera exists
     camera = db.query(models.Camera).filter(models.Camera.id == zone_in.camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail=f"Camera with ID {zone_in.camera_id} does not exist.")

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -9,13 +9,13 @@ router = APIRouter(prefix="/api/cameras", tags=["Cameras"])
 
 @router.get("", response_model=List[schemas.CameraResponse])
 def list_cameras(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """Retrieve all configured RTSP cameras."""
+    """Retrieve all configured surveillance cameras."""
     cameras = db.query(models.Camera).offset(skip).limit(limit).all()
     return cameras
 
 @router.post("", response_model=schemas.CameraResponse, status_code=status.HTTP_201_CREATED)
 def create_camera(camera_in: schemas.CameraCreate, db: Session = Depends(get_db)):
-    """Add a new RTSP camera stream."""
+    """Register and deploy a new camera stream."""
     camera = models.Camera(**camera_in.model_dump())
     db.add(camera)
     db.commit()
