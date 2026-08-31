@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# RakshaVision AI — Hackathon Prototype Launcher for macOS/Linux (SIH26187)
+# RakshaVision AI — Edge Defense Launcher for macOS/Linux (SIH26187)
 # ==============================================================================
 
 set -e
@@ -26,7 +26,7 @@ if ! command -v node &> /dev/null; then
 fi
 
 # 3. Setup & Run Backend
-echo "[1/3] Setting up FastAPI + YOLOv8 Backend..."
+echo "[1/3] Setting up FastAPI + YOLOv8 + EasyOCR Backend..."
 cd "$PROJECT_ROOT/backend"
 
 if [ ! -d ".venv" ]; then

@@ -1,5 +1,5 @@
 # ==============================================================================
-# RakshaVision AI Monorepo — Git Ignore Rules
+# RakshaVision AI Monorepo — Git Ignore Rules (SIH26187)
 # ==============================================================================
 
 # Node / Frontend Artifacts
@@ -31,7 +31,7 @@ backend/tests/__pycache__/
 .pytest_cache/
 backend/.pytest_cache/
 
-# Databases & Media Artifacts
+# Databases & Runtime Media
 backend/data/*.db
 backend/data/*.db-wal
 backend/data/*.db-shm
@@ -58,7 +58,7 @@ frontend/.env
 !backend/.env.example
 !frontend/.env.example
 
-# IDE & OS Files
+# IDE & OS Specific
 .vscode/
 .idea/
 .DS_Store

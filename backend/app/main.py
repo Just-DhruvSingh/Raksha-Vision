@@ -3,41 +3,51 @@ import time
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from typing import List, Optional, Dict, Any, Union
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from app.database import engine, get_db, Base, SessionLocal
 from app import models, schemas
-from app.api import camera_routes, zone_routes, incident_routes, alert_routes, analytics_routes, extra_routes
-from app.vision.engine import VisionEngine, SNAPSHOTS_DIR, DATA_DIR
+from app.api import (
+    camera_routes,
+    zone_routes,
+    incident_routes,
+    alert_routes,
+    analytics_routes,
+    extra_routes,
+    notifications
+)
+from app.vision.engine import (
+    VisionEngine,
+    run_vision_pipeline,
+    SNAPSHOTS_DIR,
+    INCIDENT_MEDIA_DIR,
+    SAMPLE_VIDEOS_DIR,
+    DATA_DIR
+)
 
 logger = logging.getLogger("RakshaVisionMain")
 logging.basicConfig(level=logging.INFO)
 
-# Initialize Database tables
+# Initialize Database tables with WAL mode
 Base.metadata.create_all(bind=engine)
-
-# Setup Media directories
-INCIDENT_MEDIA_DIR = os.path.join(DATA_DIR, "incident_media")
-SAMPLE_VIDEOS_DIR = os.path.join(DATA_DIR, "sample_videos")
 
 os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
 os.makedirs(INCIDENT_MEDIA_DIR, exist_ok=True)
 os.makedirs(SAMPLE_VIDEOS_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# Offline Seed Data Function (Runs if DB is empty)
+# Offline Seed Data Initialization
 # ------------------------------------------------------------------------------
 def seed_demo_database():
     db = SessionLocal()
     try:
         if db.query(models.Camera).count() == 0:
-            logger.info("Database is empty. Seeding offline demo cameras, zones, and incidents for evaluation...")
+            logger.info("Initializing offline seed data for Hackathon evaluation...")
             
-            # 1. Demo Cameras (matching frontend UI)
             cameras = [
                 models.Camera(
                     id=1,
@@ -103,7 +113,6 @@ def seed_demo_database():
             db.add_all(cameras)
             db.commit()
 
-            # 2. Demo Restricted Polygon Zones
             zones = [
                 models.Zone(
                     id=1,
@@ -133,7 +142,6 @@ def seed_demo_database():
             db.add_all(zones)
             db.commit()
 
-            # 3. Demo Recent Incidents (matching frontend Incidents.jsx & Alerts.jsx)
             now = datetime.utcnow()
             incidents = [
                 models.Incident(
@@ -147,6 +155,7 @@ def seed_demo_database():
                     description="Unauthorized movement detected near restricted border perimeter.",
                     bbox=[120.0, 140.0, 220.0, 320.0],
                     snapshot_path="snapshots/sample_breach_1.jpg",
+                    video_clip_path="media/sample_breach_1.mp4",
                     status="investigating",
                     timestamp=now - timedelta(minutes=2)
                 ),
@@ -158,9 +167,10 @@ def seed_demo_database():
                     object_type="car",
                     confidence=0.91,
                     severity="HIGH",
-                    description="Vehicle with an unrecognized number plate detected at checkpoint.",
+                    description="Vehicle with unrecognized number plate detected at Checkpoint Alpha.",
                     bbox=[200.0, 160.0, 380.0, 290.0],
                     snapshot_path="snapshots/sample_breach_2.jpg",
+                    video_clip_path="media/sample_breach_2.mp4",
                     status="under-review",
                     timestamp=now - timedelta(minutes=14)
                 ),
@@ -172,7 +182,7 @@ def seed_demo_database():
                     object_type="person",
                     confidence=0.88,
                     severity="HIGH",
-                    description="Facial recognition system generated a watchlist match.",
+                    description="Facial recognition match flagged at North Checkpoint.",
                     bbox=[150.0, 90.0, 260.0, 240.0],
                     snapshot_path="snapshots/sample_breach_3.jpg",
                     status="investigating",
@@ -186,7 +196,7 @@ def seed_demo_database():
                     object_type="car",
                     confidence=0.85,
                     severity="MEDIUM",
-                    description="AI object detection identified an unattended object.",
+                    description="AI object detection identified unattended cargo near Watch Tower.",
                     bbox=[280.0, 210.0, 360.0, 270.0],
                     snapshot_path="snapshots/sample_breach_4.jpg",
                     status="resolved",
@@ -195,24 +205,23 @@ def seed_demo_database():
             ]
             db.add_all(incidents)
             db.commit()
-            logger.info("Demo database seeded successfully with 6 cameras, 3 zones, and 4 incidents.")
+            logger.info("Seed data successfully populated.")
     except Exception as e:
-        logger.error(f"Database seed error: {e}")
+        logger.error(f"Seed error: {e}")
     finally:
         db.close()
 
 seed_demo_database()
 
 # ------------------------------------------------------------------------------
-# FastAPI App Initialization
+# FastAPI Application Configuration
 # ------------------------------------------------------------------------------
 app = FastAPI(
     title="RakshaVision AI Backend",
-    description="Edge-Native Perimeter Defense & Intrusion Detection System API (SIH26187)",
-    version="1.0.0"
+    description="Edge-Native Perimeter Defense, ANPR & Intrusion Detection System API (SIH26187)",
+    version="2.0.0"
 )
 
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -221,13 +230,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Static Media Endpoints
+# Mount Static Media Directories
 app.mount("/media", StaticFiles(directory=INCIDENT_MEDIA_DIR), name="media")
 app.mount("/snapshots", StaticFiles(directory=SNAPSHOTS_DIR), name="snapshots")
 app.mount("/incident_media", StaticFiles(directory=INCIDENT_MEDIA_DIR), name="incident_media")
 app.mount("/sample_videos", StaticFiles(directory=SAMPLE_VIDEOS_DIR), name="sample_videos")
 
-# Include Routers for /api and /api/v1 prefixes
+# Mount API Routers (both /api and /api/v1 prefixes)
 app.include_router(camera_routes.router)
 app.include_router(camera_routes.router, prefix="/api/v1")
 
@@ -243,10 +252,13 @@ app.include_router(alert_routes.router, prefix="/api/v1")
 app.include_router(analytics_routes.router)
 app.include_router(analytics_routes.router, prefix="/api/v1")
 
+app.include_router(notifications.router)
+app.include_router(notifications.router, prefix="/api/v1")
+
 app.include_router(extra_routes.router)
 
 # ------------------------------------------------------------------------------
-# WebSocket Real-Time Connection Manager
+# WebSocket Manager
 # ------------------------------------------------------------------------------
 class WebSocketManager:
     def __init__(self):
@@ -255,15 +267,15 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        logger.info(f"WebSocket client connected. Active: {len(self.active_connections)}")
+        logger.info(f"WebSocket client connected. Total active: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-            logger.info(f"WebSocket client disconnected. Active: {len(self.active_connections)}")
+            logger.info(f"WebSocket client disconnected. Total active: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):
-        for ws in self.active_connections:
+        for ws in list(self.active_connections):
             try:
                 await ws.send_json(message)
             except Exception:
@@ -271,24 +283,15 @@ class WebSocketManager:
 
 ws_manager = WebSocketManager()
 
-# Global Vision Engine instance
-_vision_engine_instance: Optional[VisionEngine] = None
-
-def get_vision_engine() -> VisionEngine:
-    global _vision_engine_instance
-    if _vision_engine_instance is None:
-        _vision_engine_instance = VisionEngine(model_path="yolov8n.pt")
-    return _vision_engine_instance
-
 # ------------------------------------------------------------------------------
-# Root & Health Check Endpoints
+# System Root & Health Check Endpoints
 # ------------------------------------------------------------------------------
 @app.get("/", tags=["Root"])
 def root():
     return {
         "system": "RakshaVision AI Perimeter Defense System API",
         "status": "online",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "docs": "/docs",
         "health": "/health"
     }
@@ -301,33 +304,78 @@ def health():
         "status": "online",
         "system": "RakshaVision AI Edge Backend",
         "database": "SQLite (WAL Mode)",
-        "version": "1.0.0",
+        "anpr_engine": "EasyOCR Offline",
+        "version": "2.0.0",
         "timestamp": datetime.utcnow().isoformat()
     }
 
 # ------------------------------------------------------------------------------
-# WebSocket Real-Time Telemetry & Alert Stream
+# Dynamic WebSocket Vision Telemetry Stream
 # ------------------------------------------------------------------------------
+def _resolve_camera_source_and_zones(camera_id_str: str) -> Tuple[Union[int, str], List[Dict[str, Any]]]:
+    """Resolves video source (webcam 0 vs offline video file) and zones from database."""
+    # Check if live webcam requested
+    if camera_id_str.lower() in ["cam_live", "0", "webcam", "live"]:
+        return 0, []
+
+    db = SessionLocal()
+    try:
+        cam_id = int(camera_id_str.replace("CAM-", "").replace("cam_", ""))
+        cam = db.query(models.Camera).filter(models.Camera.id == cam_id).first()
+        zones = db.query(models.Zone).filter(models.Zone.camera_id == cam_id, models.Zone.is_active == True).all()
+        zone_list = [{"id": z.id, "name": z.name, "polygon_coords": z.polygon_coords} for z in zones]
+
+        if cam and cam.rtsp_url:
+            raw_url = cam.rtsp_url
+            if raw_url.startswith("sample_videos/"):
+                filepath = os.path.join(DATA_DIR, raw_url)
+                if os.path.exists(filepath):
+                    return filepath, zone_list
+            elif os.path.exists(raw_url):
+                return raw_url, zone_list
+        return 0, zone_list
+    except Exception:
+        return 0, []
+    finally:
+        db.close()
+
+
+@app.websocket("/ws/live/{camera_id}")
+async def dynamic_camera_websocket(websocket: WebSocket, camera_id: str):
+    """
+    Streams real-time YOLOv8 + ByteTrack + ANPR detections and telemetry for a specific camera.
+    - If camera_id == 'cam_live' or '0', uses live laptop webcam.
+    - Otherwise, streams corresponding CCTV footage with continuous looping.
+    """
+    await ws_manager.connect(websocket)
+    source, zones = _resolve_camera_source_and_zones(camera_id)
+    
+    try:
+        pipeline = run_vision_pipeline(source=source, zones=zones, camera_id=camera_id)
+        async for telemetry in pipeline:
+            await websocket.send_json(telemetry)
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket camera stream error: {e}")
+        ws_manager.disconnect(websocket)
+
+
 @app.websocket("/ws/live")
 @app.websocket("/ws/alerts")
 @app.websocket("/api/v1/ws")
 @app.websocket("/ws")
-async def websocket_telemetry_stream(websocket: WebSocket):
-    """
-    Real-time WebSocket endpoint streaming detection telemetry, threat status, and alert broadcasts.
-    """
+async def default_websocket_stream(websocket: WebSocket):
+    """Default real-time WebSocket connection for live telemetry and alert broadcasting."""
     await ws_manager.connect(websocket)
     try:
-        # Send initial connection handshake
         await websocket.send_json({
             "type": "handshake",
             "status": "connected",
-            "system": "RakshaVision AI Telemetry Stream",
+            "system": "RakshaVision AI Telemetry Broadcaster",
             "timestamp": datetime.utcnow().isoformat()
         })
-        
         while True:
-            # Await client ping or message
             data = await websocket.receive_text()
             if data == "ping":
                 await websocket.send_text("pong")

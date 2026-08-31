@@ -1,9 +1,9 @@
 @echo off
-TITLE RakshaVision AI — Hackathon Prototype Launcher (SIH26187)
+TITLE RakshaVision AI — Edge Defense Launcher (SIH26187)
 COLOR 0A
 
 echo ==============================================================================
-echo        RAKSHAVISION AI — EDGE PERIMETER DEFENSE SYSTEM
+echo        RAKSHAVISION AI — EDGE PERIMETER DEFENSE & ANPR SYSTEM
 echo               Smart India Hackathon Prototype (SIH26187)
 echo ==============================================================================
 echo.
@@ -28,7 +28,7 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 :: 4. Start Backend Server
-echo [1/3] Starting FastAPI + YOLOv8 + SQLite Backend...
+echo [1/3] Starting FastAPI + YOLOv8 + EasyOCR Backend...
 cd backend
 
 IF NOT EXIST ".venv" (
@@ -75,10 +75,10 @@ start http://localhost:5173
 
 echo.
 echo ==============================================================================
-echo [SUCCESS] RakshaVision AI is now live!
+echo [SUCCESS] RakshaVision AI is live!
 echo   * Frontend Dashboard:   http://localhost:5173
-echo   * Backend REST APIs:    http://localhost:8000/docs
-echo   * WebSocket Endpoint:   ws://localhost:8000/ws/live
+echo   * Interactive Swagger:  http://localhost:8000/docs
+echo   * Live Webcam Stream:   ws://localhost:8000/ws/live/cam_live
 echo ==============================================================================
 echo Press any key to exit launcher (Servers will keep running in their windows).
 pause >nul
